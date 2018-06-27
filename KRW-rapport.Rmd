@@ -1,0 +1,1474 @@
+---
+title: "Toestand oppervlaktewater volgens KRW - Rapportagejaar 2017"
+output: 
+  flexdashboard::flex_dashboard:
+    storyboard: true
+    social: menu
+    source: embed
+  #runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+
+#```{r Inlezen shapes, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(dplyr)
+library(rgdal)
+library(sp)
+library(tmap)
+library(maptools)
+library(ggplot2)
+library(plotly)
+#library(shiny)
+
+
+# Inlezen shapefiles
+krw_shape <- readOGR(dsn = "shapefile", layer = "KRW-waterlichamen")
+plaatsen <- readOGR(dsn = "shapefile", layer = "plaatsen")
+wsgrens <- readOGR(dsn = "shapefile", layer = "waterschapsgrens")
+
+# Inlezen databestand
+krw_oordelen <- read.csv(file = "data/38_211_2017_OW_20170731233317_KRWOordeel.csv",
+                         sep = ";",
+                         dec = ".",
+                         header = TRUE)
+
+parameters <- read.csv(file = "data/parameterlijst.csv",
+                       sep = ";",
+                       dec = ".",
+                       header = TRUE)
+
+
+krw_oordelen <- left_join(krw_oordelen, parameters, by = "ParameterTyperingCode")
+
+```
+
+
+
+### De algehele toestand water is nog niet bereikt. Dit komt met name doordat de goede ecologische toestand nog niet is bereikt.
+
+```{r Algehele toestand, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+samenvatting <- subset(krw_oordelen, 
+                       krw_oordelen$ParameterTyperingOmschrijving == "Eindoordeel oppervlaktewater"|
+                       krw_oordelen$ParameterTyperingOmschrijving == "Chemische toestand"|
+                       krw_oordelen$ParameterTyperingOmschrijving == "Ecologie toestand of potentieel"|
+                       krw_oordelen$ParameterTyperingOmschrijving == "Biologie totaal"|
+                       krw_oordelen$ParameterTyperingOmschrijving == "Macrofauna-kwaliteit"|
+                       krw_oordelen$ParameterTyperingOmschrijving == "Overige waterflora-kwaliteit"|
+                       krw_oordelen$ParameterTyperingOmschrijving == "Vis-kwaliteit"|
+                       krw_oordelen$ParameterTyperingOmschrijving == "Fytoplankton-kwaliteit"|
+                       krw_oordelen$ParameterTyperingOmschrijving == "Algemeen fysisch chemische parameters"|
+                       krw_oordelen$ParameterTyperingOmschrijving == "Overig relevante verontreinigende stoffen")
+
+algehele_toestand <- samenvatting %>%
+  group_by(GeoObjectCode,
+           ParameterTyperingCode,
+           ParameterTyperingOmschrijving,
+           AlfanumeriekeWaarde) %>%
+  summarise((n = n()))
+
+
+
+oordelen_samenvatting <- ggplot(data = algehele_toestand, aes(ParameterTyperingOmschrijving)) +
+  geom_bar(aes(fill = AlfanumeriekeWaarde),position = "stack")+
+  #coord_fixed(ratio = 0.2)+
+  #coord_flip()+
+  theme_bw()+
+  theme(legend.position = "bottom",
+        axis.text.x=element_text(angle = -90, hjust = 0))+
+  scale_x_discrete(limits = c("Eindoordeel oppervlaktewater",
+                              "Chemische toestand",
+                              "Ecologie toestand of potentieel",
+                              "Biologie totaal",
+                              "Macrofauna-kwaliteit",
+                              "Overige waterflora-kwaliteit",
+                              "Vis-kwaliteit",
+                              "Fytoplankton-kwaliteit",
+                              "Algemeen fysisch chemische parameters",
+                              "Overig relevante verontreinigende stoffen"
+                              ))+
+  scale_fill_manual("",
+                    values = c("Goed" = "forestgreen",
+                               "Matig" = "yellow2",
+                               "Ontoereikend" = "orange2",
+                               "Slecht" = "red3",
+                               "Voldoet" = "royalblue4",
+                               "Voldoet niet" = "red3"))+
+  ggtitle("Toestand oppervlaktewaterkwaliteit 2014 - 2016")+
+  xlab("")+
+  ylab("Aantal waterlichamen") 
+
+p = ggplotly(oordelen_samenvatting)
+
+p <- layout(p, orientation = 'h')
+
+p
+
+```
+
+***
+
+De algehele waterkwaliteit voldoet in geen enkel waterlichaam. Dit komt vooral door het 'one out - all out'-principe, waarbij de slechtst scorende element het eindoordeel bepaalt. Verbeteringen als gevolg van genomen maatregelen zijn daardoor niet altijd (direct) zichtbaar.
+
+De chemische waterkwaliteit is over het algemeen geen knelpunt. Het is met name de ecologische kwaliteit die matig tot slecht  scoort. Dit komt vooral door de geringe biologische kwaliteit. De slechtste van de biologische maatlatscores bepaalt namelijk de toestand. Dit zijn vooral macrofauna en vissen. 
+
+De specifiek verontreinigende stoffen en algemeen fysisch-chemische parameters zijn in de meeste gevallen onvoldoende. De normoverschrijding komt met name door totaal fosfor, totaal stikstof, zink en ammonium. Kobalt wordt sinds 2015 gemeten. Ook deze is vaak norm overschrijdend.
+
+
+
+### De goede chemische toestand is in nagenoeg alle waterlichamen bereikt. Het zijn met name enkele niet-ubiquitaire prioritaire stoffen die normoverschrijdend zijn.
+
+```{r Chemische toestand}
+
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "CHEMT")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Chemische toestand",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+
+```
+
+***
+De chemische toestand betreft het resultaat van de beoordeling op een aantal prioritaire stoffen. De prioritaire stoffen zijn onderverdeeld in 3 categoriën:
+
+- Prioritaire stoffen ubiquitair
+
+- Prioritaire stoffen niet-ubiquitair
+
+- Nieuwe prioritaire stoffen
+
+Ubiquitaire prioritaire stoffen zijn stoffen die wegens hun gevaren (persistentie, bioaccumulatie, toxiciteit) niet meer gebruikt mogen worden, maar waar nog lange tijd normoverschrijdingen door nalevering vanuit het systeem te verwachten is. Voorbeelden van ubiquitaire prioritaire stoffen zijn gebromeerde dimethylethers, endosulfan en som HCH.
+
+Voorbeelden van niet-ubiquitaire prioritaire stoffen zijn kwik en kwikverbindingen, nikkel, cadmium, polycyclische aromatische koolwaterstoffen (PAK), tributyltinverbindingen en 4-tertiair-octylfenol.
+
+De nieuwe prioritaire stoffen zijn de stoffen nummers 34 tot en met 45 uit de gewijzigde Richtlijn Prioritaire stoffen. Deze stoffen maken pas in 2021 onderdeel uit van de toestandsbeoordeling.
+
+### Taartdiagram Chemische toestand
+
+```{r taartdiagram_chemie}
+chemie <- subset(krw_oordelen, 
+#                       krw_oordelen$ParameterTyperingOmschrijving == "Specifieke verontreinigende stoffen" |
+#                       krw_oordelen$ParameterTyperingCode == "FYSCHEM" |
+                       krw_oordelen$ParameterTyperingCode == "CHEMT")# |
+#                       krw_oordelen$ParameterTyperingCode == "ECOLT" )
+                       
+  
+chemie <- chemie %>%
+  group_by(ParameterTyperingCode,
+           ParameterTyperingOmschrijving,
+           AlfanumeriekeWaarde)%>%
+  summarise((n = n()))  
+  
+
+colnames(chemie)[4] <- "aantal"  
+
+
+
+
+
+pie <- ggplot(chemie, aes(x = factor(1), 
+                                 y = aantal, 
+                                 fill = AlfanumeriekeWaarde
+                                 )) +
+  geom_bar(width = 1, stat = "identity")+ 
+  theme_void()+
+  geom_text(aes(label = aantal), position = position_stack(vjust = 0.5)) +
+  coord_polar(theta = "y")+
+  theme(legend.position = "bottom")+
+  scale_fill_manual("",
+                    values = c("Goed" = "forestgreen",
+                               "Matig" = "yellow2",
+                               "Ontoereikend" = "orange2",
+                               "Slecht" = "red3",
+                               "Voldoet" = "royalblue4",
+                               "Voldoet niet" = "red3"))+
+  ggtitle("Chemische Toestand 2014 - 2016")  
+  
+  
+  
+
+
+
+pie
+```
+
+
+### Met name nikkel komt in een aantal waterlichamen normoverschrijdend voor. Dit komt door verhoogde gehalten ervan in de diepere bodemlagen.
+
+```{r Nikkel}
+
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "Ni")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Nikkel",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+
+```
+
+*** 
+Nikkel komt van nature in grote delen van de Brabantse bodem voor. Als gevolg van natuurlijke processen komt nikkel verhoogd in het grondwater voor. Via het grondwater bereikt nikkel het oppervlaktewatersysteem.
+De verhoogde gehalten van zware metalen in het grondwater worden voornamelijk gemeten op
+de Brabantse dekzanden. Deze gronden zijn relatief gevoelig voor uitspoeling en zijn pyriethoudend. Door natuurlijke processen (bodemvorming, oxidatie van pyriet etc) komt dit nikkel vrij.
+
+Een bijzondere vorm waarbij het bodemmateriaal zelf, of anders gezegd de natuurlijke
+bodemgesteldheid, de oorzaak is van verhoogde gehalten in het grondwater komt voor in
+bepaalde kwelgebieden. De aanwezigheid van zogenaamd ijzeroer in combinatie met
+opkwellend zuurstofarm grondwater leidt tot verhoogde gehalten van zware metalen in het
+grondwater, met name arseen maar ook nikkel. Bekende gebieden bij waterschap Aa en Maas zijn wijstgebieden rondom Uden. En diverse gebieden in district Raam.
+
+
+
+### Cadmium is in alleen in de Sint-Jansbeek en Loobeek/Molenbeek normoverschrijdend. Voor deze normoverschrijding is geen duidelijke bron aanwijsbaar.
+```{r Cadmium}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "Cd")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Cadmium",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+In de Sint-Jansbeek komt cadmium normoverschrijdend voor. Deze overschrijding is hier al sinds 2010. Een duidelijke oorzaak is niet bekend.
+
+
+
+### 4-Tertiair-octylfenol voldoet alleen in de Hertogswetering niet aan de norm. Uit nader onderzoek is gebleken dat deze stof vanuit de keten, via het effluent op oppervlaktewater terecht komt.
+
+```{r 4-tertiair-octylfenol}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "4ttC8yFol")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "4-Tertiair-Octylfenol",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+4-Tertiair-octylfenol overschrijdt al diverse jaren de norm in waterlichaam Hertogswetering. In de overige waterlichamen wordt deze stof niet aangetroffen. Monitoring in deze waterlichamen hierop vindt daarom maar een keer in de 6 jaar plaats op de toestand en trend meetpunten in de Aa en Graafse Raam.
+
+Uit nader onderzoek is gebleken dat 4-tertiair-octylfenol via het effluent van rwzi Oijen in het oppervlaktewater terecht komt. De stof komt daarmee vanuit de waterketen.
+
+De exacte bron van deze stof is nog niet achterhaald.
+
+
+### De ecologische toestand is niet op orde. Dit komt doordat de biologische toestand niet op orde is. Ook algemeen fysisch-chemische- en specifiek verontreinigende stoffen dragen hier aan bij.
+
+```{r Ecologische toestand}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "ECOLT")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Ecologische toestand",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+De ecologische toestand is opgebouwd uit de beoordelingen van de biologische kwaliteit, de algemeen fysisch-chemische kwaliteit, de kwaliteit van specifiek verontreinigende stoffen en hydromorfologie. De biologische kwaliteit is bepalend voor de ecologische kwaliteit. Alleen als de biologische kwaliteit goed is, worden de beoordelingen van de fysische-chemische kwaliteit en de kwaliteit van de specifiek verontreingende stoffen beschouwd, voor het onderscheid tussen een "goede" en "matige"ecologische kwaliteit.
+
+Deze beoordelingsmethodiek is er op gebaseerd dat de fysisch-chemische kwaliteit randvoorwaarden zijn voor het tot ontwikkeling kunnen komen van een bepaalde biologische kwaliteit. Dus om bijvoorbeeld een goede biologische toestand te krijgen, moeten de nutriënten van een bepaald niveau zijn.
+
+
+### Taartdiagram Ecologische toestand
+
+```{r taartdiagram_ecologie}
+ecologie <- subset(krw_oordelen, 
+#                       krw_oordelen$ParameterTyperingOmschrijving == "Specifieke verontreinigende stoffen" |
+#                       krw_oordelen$ParameterTyperingCode == "FYSCHEM" |
+#                       krw_oordelen$ParameterTyperingCode == "CHEMT")# |
+                       krw_oordelen$ParameterTyperingCode == "ECOLT" )
+                       
+  
+ecologie <- ecologie %>%
+  group_by(ParameterTyperingCode,
+           ParameterTyperingOmschrijving,
+           AlfanumeriekeWaarde)%>%
+  summarise((n = n()))  
+  
+
+colnames(ecologie)[4] <- "aantal"  
+
+
+
+
+
+pie <- ggplot(ecologie, aes(x = factor(1), 
+                                 y = aantal, 
+                                 fill = AlfanumeriekeWaarde
+                                 )) +
+  geom_bar(width = 1, stat = "identity")+ 
+  theme_void()+
+  geom_text(aes(label = aantal), position = position_stack(vjust = 0.5)) +
+  coord_polar(theta = "y")+
+  theme(legend.position = "bottom")+
+  scale_fill_manual("",
+                    values = c("Goed" = "forestgreen",
+                               "Matig" = "yellow2",
+                               "Ontoereikend" = "orange2",
+                               "Slecht" = "red3",
+                               "Voldoet" = "royalblue4",
+                               "Voldoet niet" = "red3"))+
+  ggtitle("Ecologische Toestand 2014 - 2016")  
+  
+  
+  
+
+
+
+pie
+```
+
+
+
+### De biologische toestand is nog niet op orde. Dit wordt hoofdzakelijk veroorzaakt door macrofauna en vis.
+```{r Biologische toestand, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "BIOLT")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Biologische toestand",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+#tmap_leaflet(biologie)
+
+```
+
+
+
+*** 
+Op basis van de doelen (planperiode 2016-2021) voor de biologische kwaliteitselementen is in geen enkel waterlichaam de goede toestand behaald. Het overgrote deel van de waterlichamen scoort ontoereikend tot slecht. Deze score wordt voornamelijk veroorzaakt door macrofauna en vis en in mindere mate door overige waterflora.
+
+Het grootste kenlpunt voor een goede score in de stromende wateren (R-typen) is het ontbreken van voldoende stroming en in mindere mate een verhoogde organische belasting. Daarnaast vormen enkele barières, zoals stuwen die niet vispasseerbaar zijn een knelpunt.
+
+In de sloten en kanalen (M-typen) is de macrofauna beter ontwikkeld in de richting van de gewenste kwaliteit. De belangrijkste knelpunten voor het niet halen van de goede toestand is een te hoge voedselrijkdom en een eentonige morfologie. In wateren waar de toestand voor vis nog niet voldoet, is het aandeel plantminnende en migrerende vis nog net iets te laag. Dit kan duiden op te frequent schonen en dat niet alle watergangen vrij optrekbaar zijn.
+
+
+
+
+### Onderverdeling toestand afzonderlijke biologische componenten
+```{r Onderverdeling biologie, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+
+
+biologie_samenvatting <- ggplot(data = algehele_toestand, aes(ParameterTyperingOmschrijving)) +
+  geom_bar(aes(fill = AlfanumeriekeWaarde), width = 0.3, position = position_stack(vjust=0.5))+
+  coord_fixed(ratio = 0.2)+
+  theme_bw()+
+  theme(legend.position = "bottom",
+        axis.text.x=element_text(angle = -90, hjust = 0))+
+  scale_x_discrete(limits = c("Macrofauna-kwaliteit",
+                              "Overige waterflora-kwaliteit",
+                              "Vis-kwaliteit",
+                              "Fytoplankton-kwaliteit"
+                              ))+
+  scale_fill_manual("",
+                    values = c("Goed" = "forestgreen",
+                               "Matig" = "yellow2",
+                               "Ontoereikend" = "orange2",
+                               "Slecht" = "red3",
+                               "Voldoet" = "royalblue4",
+                               "Voldoet niet" = "red3"))+
+  ggtitle("Toestand individuele biologische componenten (2014 - 2016)")+
+  xlab("")+
+  ylab("Aantal waterlichamen") 
+
+ggplotly(biologie_samenvatting)
+
+
+
+```
+
+
+### Macrofauna scoort over het algemeen matig tot slecht. Belangrijkste oorzaak hiervoor is onvoldoende stroming (in R-typen) en een te hoge voedselrijkdom
+
+```{r Macrofauna}
+
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "MAFAUNA")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Macrofauna",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+Door onvoldoende stroming, te weinig schaduw langs de beken en stuwen die niet passeerbaar zijn, blijft de macrofauna in stromende wateren achter op de normen. In stilstaande wateren zorgt een te hoge voedselrijkdom en een eentonige morfologie voor een matige score. Deze score zit daarmee niet ver onder de norm.
+
+
+
+
+### In ongeveer 1/3 van de waterlichamen scoort de overige waterflora goed. In de overige waterlichamen varieert de score van matig tot slecht.
+```{r Overige waterflora}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "OVWFLORA")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Overige waterflora",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+Over het algemeen is de toestand voor overige waterflora in stromende wateren beter dan in stilstaande sloten en kanalen. Belangrijkste verklaring hiervoor is dat bij de bepaling van de toestand in stromende wateren ook het suboordeel voor diatomeën meetelt. Aangezien dit oordeel veelal goed is, is het eindoordeel hierdoor ook beter. 
+
+In stilstaande wateren zorgt een te hoge voedselrijkdom, al dan niet in combinatie met tegennatuurlijk peilbeheer voor het niet halen van de norm.
+
+
+### In ongeveer de helft van de waterlichamen is de toestand voor vissen ontoereikend tot slecht. Dit zijn hoofdzakelijk de stromende wateren.
+
+```{r Vissen}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "VIS")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Vissen",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+Over het algemeen is de toestand voor vissen in sloten en kanalen beter dan in stromende wateren. In de sloten en kanalen bestaat de visstand uit een voldoende aandeel plantminnende vissoorten in combinatie met een voldoende laag aandeel brasem en karper. In de stromende beken zijn de benedenlopen van de beeksystemen nog niet volledig optrekbaar vanuit de Maas en is er vaak onvoldoende stroming. De stromingsminnende soorten vormen een klein aandeel, de algemene soorten hebben de overhand. Daarnaast is ook binnen de waterlichamen de verstuwing een belemmerende factor. In enkele bovenlopen vindt regelmatig droogval plaats. Er kan geen herkolonisatie plaatsvinden vanaf benedenstrooms.
+
+
+
+
+
+### Fytoplankton voldoet overal aan de norm
+```{r Fytoplankton}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "FYTOPL")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Fytoplankton",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+De toestand van fytoplankton is alleen van belang bij gebufferde- en grote ondiepe kanalen (Type M3 en M6). In de overige wateren hoeft fytoplankton niet gemeten te worden.
+
+Fytoplankton is geen belemmering in onze waterlichamen. Hoewel het Drongelens Kanaal op de grens van matig en goed zit, door de verhoogde voedselrijkdom van het kanaal.
+
+
+### De algemeen fysisch- chemische parameters voldoen niet aan de norm. De toestand van de nutriënten speelt een belangrijke rol hierbij. 
+
+```{r Algemeen fysisch-chemische parameters}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "FYSCHEM")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Algemeen fysisch chemische parameters",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+Tot de fysisch-chemische parameters behoren de nutriënten (fosfor en stikstof), temperatuur, zuurgraad, zoutgehalte en zuurstofgehalte.
+
+De individuele nutriënten overschrijden het vaakst de norm.
+
+
+
+### Taartdiagram Algemeen fysisch-chemische parameters
+
+```{r taartdiagram_fyschem}
+afyschem <- subset(krw_oordelen, 
+#                       krw_oordelen$ParameterTyperingOmschrijving == "Specifieke verontreinigende stoffen" |
+                       krw_oordelen$ParameterTyperingCode == "FYSCHEM")# |
+#                       krw_oordelen$ParameterTyperingCode == "CHEMT")# |
+#                       krw_oordelen$ParameterTyperingCode == "ECOLT" )
+                       
+  
+afyschem <- afyschem %>%
+  group_by(ParameterTyperingCode,
+           ParameterTyperingOmschrijving,
+           AlfanumeriekeWaarde)%>%
+  summarise((n = n()))  
+  
+
+colnames(afyschem)[4] <- "aantal"  
+
+
+
+
+
+pie <- ggplot(afyschem, aes(x = factor(1), 
+                                 y = aantal, 
+                                 fill = AlfanumeriekeWaarde
+                                 )) +
+  geom_bar(width = 1, stat = "identity")+ 
+  theme_void()+
+  geom_text(aes(label = aantal), position = position_stack(vjust = 0.5)) +
+  coord_polar(theta = "y")+
+  theme(legend.position = "bottom")+
+  scale_fill_manual("",
+                    values = c("Goed" = "forestgreen",
+                               "Matig" = "yellow2",
+                               "Ontoereikend" = "orange2",
+                               "Slecht" = "red3",
+                               "Voldoet" = "royalblue4",
+                               "Voldoet niet" = "red3"))+
+  ggtitle("Algemeen fysisch-chemische parameters 2014 - 2016")  
+  
+  
+  
+
+
+
+pie
+```
+
+
+### Toestand afzonderlijke algemeen fysisch- chemische parameters
+```{r Onderverdeling FYSCHEM}
+
+fyschem <- subset(krw_oordelen, 
+                       krw_oordelen$ParameterTyperingCode == "Ptot"|
+                         krw_oordelen$ParameterTyperingCode == "Ntot"|
+                         krw_oordelen$ParameterTyperingCode == "pH"|
+                         krw_oordelen$ParameterTyperingOmschrijving == "Temperatuur"|
+                         krw_oordelen$ParameterTyperingCode == "O2"|
+                         krw_oordelen$ParameterTyperingCode == "Cl"|
+                         krw_oordelen$ParameterTyperingCode == "Vis-kwaliteit"|
+                         krw_oordelen$ParameterTyperingCode == "ZICHT")
+
+algfyschem <- fyschem %>%
+  group_by(GeoObjectCode,
+           ParameterTyperingCode,
+           ParameterTyperingOmschrijving,
+           AlfanumeriekeWaarde)%>%
+  summarise((n = n()))
+
+
+fyschemplot <- ggplot(data = algfyschem, aes(ParameterTyperingOmschrijving)) +
+  geom_bar(aes(fill = AlfanumeriekeWaarde))+
+  theme_bw()+
+  theme(legend.position = "bottom")+
+  scale_x_discrete(limits = c("fosfor totaal",
+                              "stikstof totaal",
+                              "Zuurgraad",
+                              "Temperatuur",
+                              "zuurstof",
+                              "chloride",
+                              "Doorzicht"
+  ))+
+  scale_fill_manual("",
+                    values = c("Goed" = "forestgreen",
+                               "Matig" = "yellow2",
+                               "Ontoereikend" = "orange2",
+                               "Slecht" = "red3",
+                               "Voldoet" = "royalblue4",
+                               "Voldoet niet" = "red3"))+
+  ggtitle("Toestand afzonderlijke Algemeen fysisch- chemische parameters")+
+  xlab("")+
+  ylab("Aantal waterlichamen")
+
+ggplotly(fyschemplot)
+
+```
+
+
+
+### Fosfor totaal is vooral een probleem in het Aa dal (met haar zijlopen) en de Hertogswetering. In het dal van de Raam is fosfor een minder groot probleem.
+
+```{r Totaal fosfor}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "Ptot")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Fosfor totaal",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+Belangrijkste bronnen voor totaal fosfor zijn de rwzi's en landbouwemissies. De landbouwemissies worden voornamelijk bepaald door de landbouwkundige toestand voor totaal fosfor (bemestingsstrategie vanuit de meststoffenwetgeving). Daarnaast speelt de afspoelingsgevoeligheid (helling), de aan- of afwezigheid van ijzer (fosfaar kan irreversibel aan ijzer binden) en de redoxtoestand van de bodem een rol. Bij nattere grond is de toestand meer gereduceerd en zijn er minder metaalionen om fosfaat te binden. In het beekdal van de Aa zijn de grondwaterstanden over het algemeen wat hoger en bevatten de gronden relatief weinig ijzer, waardoor de afspoelingsgevoeligheid groter is. In district Raam daarentegen is het grondwater zeer ijzerrijk, waardoor fosfaat gebonden wordt.
+
+
+
+### Stikstof totaal is nagenoeg overal normoverschrijdend. Overall kan worden gesteld dat met name in R4 en R5 waterlichamen het doelgat het hoogste is.
+
+```{r Totaal stikstof}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "Ntot")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Stikstof totaal",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+Belangrijkste bronnen voor stikstof zijn de rwzi's en landbouw.
+De uitspoeling van stikstof naar oppervlaktewater is afhankelijk van de grondwaterstanden. In de districten Hertogswetering en Beneden Aa zijn de landbouwbodems veel natter als gevolg van hogere grondwaterstanden. Hierdoor is minder uitspoeling van stikstof naar bodemlagen onder de bouwvoor, zodat landbouwgewassen dit kunnen opnemen. Ook vindt er meer denitrificatie plaats, omdat de omgeving veel organische stof bevat onder vaak zuurstofarmere omgeving. Wel is er meer afspoeling. Per saldo zijn de landbouwemissies in nat gebied lager dan in droge gebieden. In de districten Boven Aa en Raam zijn de grondwaterstanden lager en daarmee de stikstofemissies uit de landbouw groter.
+
+
+
+### De meeste normoverschrijdingen voor temperatuur vinden plaats in de R4-bovenlopen. Belangrijkste oorzaak hiervan is dat deze bovenlopen vaak onbeschaduwd zijn.
+
+```{r Temperatuur}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "T")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Temperatuur",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+Een aanzienlijk deel van de normoverschrijdingen hebben te maken met de normstelling. Voor de meeste waterlichamen is de norm 25 graden. Voor permanent watervoerende bovenlopen van beken (R4) is de norm maar 18 graden. Die norm hoort bij een natuurlijke beek met schaduw (bos) en veel relatief koud kwelwater.
+
+De meeste bovenlopen binnen het beheergebied van waterschap Aa en Maas zijn onbeschaduwd. Dit draagt niet bij aan het afvlakken van temperatuurpieken. Te hoge temperaturen in bovenlopen dragen daarnaast niet bij aan het vestigen van koude stenotherme macrofaunasoorten. Deze soorten zijn kenmerkend voor bovenloen en dragen bij aan een goede biologische toestand. Bovendien zorgen boomwortels voor extra habitat, waar macrofaunasoorten die harde substraten vereisen (zoals hout en grind) zich kunnen vestigen. Deze soorten zijn eveneens kenmerkend voor bovenlopen.
+
+Beschaduwing zorgt eveneens voor een verminderde groei van planten, wat kenmerkend is voor bovenlopen. Dit zorgt voor een betere score voor de deelmaatlat macrofyten en daarmee voor een stabieler systeem. Planten scoren in de meeste bovenlopen nu goed, maar dit komt met name door de zeer goede score van de deelmaatlat diatomeën, terwijl de macrofyten overwegend slecht scoren.
+
+
+
+
+### Bijna in alle waterlichamen voldoet minimaal een specifiek verontreinigende stof niet aan de norm. De stoffen die het vaaktst de norm overschrijden zijn zink en ammonium.
+
+```{r Specifiek verontreinigende stoffen}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "STOFOV")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Specifiek verontreinigende stoffen",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+De KRW spreekt van specifiek verontreingende stoffen als deze in relevante hoeveelheden in oppervlaktewater kunnen voorkomen, maar er geen norm op Europees niveau is vastgesteld. Lidstaten hebben vanuit de EU een indicatieve lijst, welke stoffen te behandelen als specifiek verontreinigd. Het staat lidstaten vrij hier stoffen aan toe te voegen. Binnen de internationale stroomgebiedcommissie van de Maas zijn drie stoffen geselecteerd die voor het gehele stroomgebied als probleemstof worden beschouwd: koper, zink en pcb. 
+
+### Taartdiagram Speciiek verontreinigende stoffen
+
+```{r taartdiagram_stofov}
+svs <- subset(krw_oordelen, 
+                       krw_oordelen$ParameterTyperingOmschrijving == "Specifieke verontreinigende stoffen")# |
+#                       krw_oordelen$ParameterTyperingCode == "FYSCHEM" |
+#                       krw_oordelen$ParameterTyperingCode == "CHEMT")# |
+#                       krw_oordelen$ParameterTyperingCode == "ECOLT" )
+                       
+  
+svs <- svs %>%
+  group_by(ParameterTyperingCode,
+           ParameterTyperingOmschrijving,
+           AlfanumeriekeWaarde)%>%
+  summarise((n = n()))  
+  
+
+colnames(svs)[4] <- "aantal"  
+
+
+
+
+
+pie <- ggplot(svs, aes(x = factor(1), 
+                                 y = aantal, 
+                                 fill = AlfanumeriekeWaarde
+                                 )) +
+  geom_bar(width = 1, stat = "identity")+ 
+  theme_void()+
+  geom_text(aes(label = aantal), position = position_stack(vjust = 0.5)) +
+  coord_polar(theta = "y")+
+  theme(legend.position = "bottom")+
+  scale_fill_manual("",
+                    values = c("Goed" = "forestgreen",
+                               "Matig" = "yellow2",
+                               "Ontoereikend" = "orange2",
+                               "Slecht" = "red3",
+                               "Voldoet" = "royalblue4",
+                               "Voldoet niet" = "red3"))+
+  ggtitle("Specifiek verontreinigende stoffen 2014 - 2016")  
+  
+  
+  
+
+
+
+pie
+```
+
+
+### Toestand van enkele afzonderlijke specifiek verontreinigende stoffen.
+
+```{r Onderverdeling enkele STOFOV, echo=FALSE, message=FALSE, warning=FALSE}
+
+specifieke_stoffem <- subset(krw_oordelen, 
+                  krw_oordelen$ParameterTyperingCode == "Cu"|
+                    krw_oordelen$ParameterTyperingCode == "Zn"|
+                    krw_oordelen$ParameterTyperingCode == "Co"|
+                    krw_oordelen$ParameterTyperingOmschrijving == "ammonium")
+
+stofov <- specifieke_stoffem %>%
+  group_by(GeoObjectCode,
+           ParameterTyperingCode,
+           ParameterTyperingOmschrijving,
+           AlfanumeriekeWaarde)%>%
+  summarise((n = n()))
+
+stofovplot <- ggplot(data = stofov, aes(ParameterTyperingOmschrijving)) +
+  geom_bar(aes(fill = AlfanumeriekeWaarde))+
+  theme_bw()+
+  theme(legend.position = "bottom")+
+  scale_x_discrete(limits = c("koper",
+                              "zink",
+                              "ammonium",
+                              "kobalt"
+  ))+
+  scale_fill_manual("",
+                    values = c("Goed" = "forestgreen",
+                               "Matig" = "yellow2",
+                               "Ontoereikend" = "orange2",
+                               "Slecht" = "red3",
+                               "Voldoet" = "royalblue4",
+                               "Voldoet niet" = "red3"))+
+  ggtitle("Toestand enkele afzonderlijke specifiek verontreinigende stoffen")+
+  xlab("")+
+  ylab("Aantal waterlichamen")
+
+ggplotly(stofovplot)
+```
+
+
+
+### Koper kwam in het verelden vaak normoverschrijdend voor. Sinds het toevoegen van de correctie op biologische beschikbaarheid, is koper nergens meer normoverschrijdend.
+
+```{r Koper}
+
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "Cu")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Koper",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+
+```
+
+***
+Koper is een van de zware metalen die in het verleden regelmatig normoverschrijdend was. Tot 2014 was de norm gebaseerd op het totaal gehalte koper. Sinds de nieuwe planperiode is de norm gebaseerd op het opgeloste gehalte koper en vindt correctie op biologische beschikbaarheid plaats.
+
+
+
+### Zink overschrijdt al vele jaren de norm. Ook na correctie op biologische beschikbaarheid blijft zink een probleemstof.
+
+```{r Zink}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "Zn")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Zink",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+Zink kent drie typen normen die samen de toestand bepalen, te weten een norm voor het jaargemiddelde, norm voor het jaargemiddelde na correctie op biologische beschikbaarheid en een norm voor de maximaal toegestane concentratie.
+
+Sinds 2009 is de toestand van zink nauwelijks verbeterd. In het merendeel van de waterlichamen wordt een van de normen overschreden. Op dit moment zijn dakgoten, de metaalindustrie en kunstmestindustrie de belangrijkste bronnen van zink in oppervlaktewater. In de woningbouw wordt veel zink gebruikt in dakbedekking, dakgoten en regenpijpen. Daarnaast wordt zink gebruikt om staal te beschermen tegen oxideren. Dit zink komt door uitloging, al dan niet via riolering en rwzi, op het oppervlaktewater terecht.
+
+Tevens vormt mest een belangrijke bron in agrarisch gebied. Zink wordt aan veevoeder toegevoegd om de giftige werking van het toegevoegde koper teniet te doen.
+
+
+
+### Ammonium is in diverse waterlichamen normoverschrijdend. Normoverschrijding gaat vaak gepaard met overschrijding voor temperatuur en/of pH
+
+```{r Ammonium}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "NH4")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Ammonium",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+Ammonium kent twee type normen die samen de toestand bepalen, te weten een norm voor jaargemiddelde en een norm voor de maximale concentratie. Het is alleen niet de concentratie ammonium die bepalend is voor biologie, maar de concentratie ammoniak. Ammoniak is echter lastig te meten in tegenstelling tot ammonium. Vanuit ammonium is bij gegeven pH en temperatuur terug te rekenen hoeveel ammoniak aanwezig is. Uiteindelijk is ammonium genormeerd en de norm wordt bij ieder meetresultaat gecorrigeerd op pH en temperatuur. In het algemeen geldt dat bij een hoge watertemperatuur en/of pH de norm voor ammonium lager en daarmee strenger wordt.
+
+Voor de emissies van ammonium zijn diverse bronnen verantwoordelijk. De twee belangrijkste zijn rwzi's en landbouw.
+Gesteld kan worden dat de normoverschrijding in de Aa, Grootte Wetering en Hertogswetering mede veroorzaakt wordt door rwzi's. In de overige waterlichamen waar een normoverschrijging is geconstateerd en die niet door een rwzi zijn belast, zijn andere bronnen (onder andere landbouw) verantwoordelijk. De grootte van deze emissies vanuit deze bronnen zijn minder goed in beeld.
+
+
+
+### Kobalt is een stof die steeds vaker normoverschrijdend is. 
+
+```{r Kobalt}
+Oordelen <- subset(krw_oordelen, krw_oordelen$ParameterTyperingCode == "Co")
+Oordelen$ParameterTyperingOmschrijving <- as.factor(Oordelen$ParameterTyperingOmschrijving)
+
+colnames(Oordelen)[6] <- "CODE"
+
+titel <- as.vector(unique(krw_oordelen$ParameterTyperingOmschrijving))
+
+
+shape <- krw_shape
+
+shape@data <- data.frame(shape@data, 
+                                    Oordelen[match(
+                                    shape@data[,"CODE"],
+                                    Oordelen[,"CODE"]
+                                  ),])
+
+
+kaart <- tm_shape(wsgrens) +
+                      tm_borders() +
+         tm_shape(shp = plaatsen) +
+                      tm_borders("gray92") + 
+                      tm_fill("gray98")+
+         tm_shape(shape) +
+                      tm_lines(col = "AlfanumeriekeWaarde", 
+                               lwd = 2,
+                               palette = c("green3", 
+                                           "yellow",
+                                           "orange2",
+                                           "red3",
+                                           "royalblue",
+                                           "red2",
+                                           "gray60"),
+                               title.col = "Toestand (2014 - 2016)"
+                               )+
+        tm_layout(title = "Kobalt",
+                  title.size = 1,
+                  inner.margins = c(0.04, 0.03, 0.02, 0.01))+
+        tm_credits("© Team Power Rangers", position = c("right", "BOTTOM"))
+
+kaart
+```
+
+***
+Kobalt valt onder de specifiek verontreinigende stoffen en is een metaal waarvan in het beheergebied van Aa en Maas sinds 2013 op wordt gemonitoord. In de gemonitoorde waterlichamen is kobalt normoverschrijdend.
+
+Kobalt is een element dat van nature voorkomt in het milieu. Het kan ook in de lucht en het water terecht komen en zich afzetten op het land door middel van stof en in het oppervlaktewater terecht komen door regenwater dat door bodem stroomt die kobalt bevat.
+
+Kobalt en kobaltverbindingen worden gebruikt in de metaalindustrie, in de landbouw, als pigment in drukinkten, in de chemische industrie, in de mijnbouw en in kolencentrales (vliegas). Kobalt wordt in Nederland niet geproduceerd maar komt vrij bij gebruik in de chemische en metaalindustrie en de stof wordt gebruikt in (druk)inkten in de verfindustrie.
+
+
+
+### Totaaloverzicht toestand oppervlaktewater per waterlichaam
+```{r Totaaloverzicht}
+
+gg <- ggplot(data = krw_oordelen, aes(x = GeoObjectCode, y = ParameterTyperingOmschrijving)) +
+  geom_raster(aes(fill = AlfanumeriekeWaarde))+
+  coord_flip()+
+  theme_bw()+
+  theme(legend.position = "bottom",
+        axis.text.x=element_text(size=6, angle = -90, hjust = 0 ),
+        axis.title.y = element_text(size = 6))+
+  scale_fill_manual("",
+                    values = c("Goed" = "forestgreen",
+                               "Matig" = "yellow2",
+                               "Ontoereikend" = "orange2",
+                               "Slecht" = "red3",
+                               "Voldoet" = "royalblue4",
+                               "Voldoet niet" = "red3"))+
+  ggtitle("Totaaloverzicht toestand (2014 - 2016) per waterlichaam")+
+  xlab("Parameter")+
+  ylab("Code waterlichaam")
+ggplotly(gg)
+```
